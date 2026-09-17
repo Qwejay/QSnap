@@ -48,8 +48,8 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path "icon.svg") {
-            Write-Host "发现 icon.svg，正在生成多分辨率 icon.ico ..."
-            magick.exe -background none icon.svg -define icon:auto-resize=256,128,64,48,32,16 icon.ico
+            Write-Host "发现 icon.svg，正在使用高密度采样生成超清多分辨率 icon.ico ..."
+            magick.exe -density 1024 -background none icon.svg -define icon:auto-resize=256,128,64,48,32,16 icon.ico
           } else {
             Write-Host "未找到 icon.svg，跳过图标生成。"
           }
@@ -171,7 +171,8 @@ jobs:
               import rapidocr_onnxruntime
               ocr_path = os.path.dirname(rapidocr_onnxruntime.__file__)
               cmd.append(f"--include-data-dir={ocr_path}=rapidocr_onnxruntime")
-              print(f"[Success] Found & Included RapidOCR Data from: {ocr_path}")
+              cmd.append("--include-package=rapidocr_onnxruntime")
+              print(f"[Success] Found & Included RapidOCR Data & Package from: {ocr_path}")
           except ImportError:
               print("[Warning] rapidocr_onnxruntime not found!")
 
@@ -179,7 +180,8 @@ jobs:
               import onnxruntime
               onnx_path = os.path.dirname(onnxruntime.__file__)
               cmd.append(f"--include-data-dir={onnx_path}=onnxruntime")
-              print(f"[Success] Found & Included ONNXRuntime Data from: {onnx_path}")
+              cmd.append("--include-package=onnxruntime")
+              print(f"[Success] Found & Included ONNXRuntime Data & Package from: {onnx_path}")
           except ImportError:
               print("[Warning] onnxruntime not found!")
               
@@ -217,7 +219,6 @@ jobs:
         with:
           name: ${{ steps.meta.outputs.app_name }}-Windows-x64
           path: |
-            dist/*.exe
             dist/*.zip
           retention-days: 7
 
@@ -242,15 +243,10 @@ jobs:
             ${{ steps.changelog.outputs.changelog }}
             
             ---
-            ### 📦 下载说明
-            - **`${{ steps.meta.outputs.app_name }}_v${{ steps.meta.outputs.version }}_Windows_x64.zip`**: 便携绿色版压缩包（解压即用）。
-            - **`${{ steps.meta.outputs.app_name }}_v${{ steps.meta.outputs.version }}.exe`**: Windows 64位 独立单文件版。
-            
-            *此版本由 GitHub Actions (Nuitka C-Engine) 自动化构建。*
+            *此版本由 GitHub Actions 自动化构建。*
           draft: false
           prerelease: false
           files: |
-            dist/*.exe
             dist/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
