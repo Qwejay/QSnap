@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 __app_name__ = "QSnap"
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __author__ = "QwejayHuang"
 __company__ = "Qwesoft"
 __description__ = "Professional Screenshot Tool with HDR & Smart UI"
@@ -56,7 +56,7 @@ except ImportError:
 
 from PySide6.QtCore import (
     QByteArray, QBuffer, QIODevice, QObject, QPoint, QPointF,
-    QRect, QRectF, Qt, QThread, Signal, QTimer, QSize, 
+    QEvent, QRect, QRectF, Qt, QThread, Signal, QTimer, QSize,
     QAbstractNativeEventFilter, QPropertyAnimation, QEasingCurve
 )
 from PySide6.QtGui import (
@@ -67,10 +67,10 @@ from PySide6.QtGui import (
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QColorDialog, QDialog,
-    QFileDialog, QFrame, QHBoxLayout, QLabel, 
-    QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QTextEdit, 
-    QVBoxLayout, QWidget, QKeySequenceEdit, QSlider, QTabWidget, 
-    QGroupBox, QSpinBox, QComboBox, QToolButton, QFontDialog
+    QFileDialog, QFrame, QHBoxLayout, QLabel,
+    QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QTextEdit,
+    QVBoxLayout, QWidget, QKeySequenceEdit, QSlider, QTabWidget,
+    QGroupBox, QSpinBox, QComboBox, QToolButton, QFontDialog, QGridLayout, QToolTip
 )
 
 if getattr(sys, 'frozen', False) or "__compiled__" in globals():
@@ -127,7 +127,7 @@ def get_svg_icon(name: str, color: str = "#475569", size: int = 24) -> QIcon:
         svg_str = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="{color}" d="{path_data}"/></svg>'
         renderer = QSvgRenderer()
         renderer.load(svg_str.encode("utf-8"))
-        
+
         render_size = max(size * 4, 96)
         pixmap = QPixmap(render_size, render_size)
         pixmap.fill(Qt.GlobalColor.transparent)
@@ -228,11 +228,11 @@ def _parse_hotkey(hk_str: str) -> tuple[int, int]:
     if "ALT" in hk_str: modifiers |= 0x0001
     if "SHIFT" in hk_str: modifiers |= 0x0004
     if "WIN" in hk_str or "META" in hk_str: modifiers |= 0x0008
-    
+
     parts = hk_str.split('+')
     if not parts: return 0, 0
     last_part = parts[-1]
-    
+
     if len(last_part) == 1 and last_part.isalpha(): vk = ord(last_part)
     elif last_part.startswith('F') and last_part[1:].isdigit():
         num = int(last_part[1:])
@@ -321,7 +321,7 @@ if os.name == "nt":
         def callback(hwnd, _):
             try:
                 if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd): return True
-                
+
                 if dwmapi:
                     cloaked = ctypes.c_int(0)
                     DWMWA_CLOAKED = 14
@@ -338,7 +338,7 @@ if os.name == "nt":
                         hr = dwmapi.DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(rect), ctypes.sizeof(rect))
                         if hr == 0: got_real_bounds = True
                     except Exception: pass
-                
+
                 if not got_real_bounds:
                     if not user32.GetWindowRect(hwnd, ctypes.byref(rect)): return True
 
@@ -346,7 +346,7 @@ if os.name == "nt":
                 ry = int(rect.top / dpr) - virtual_top_left.y()
                 w = int((rect.right - rect.left) / dpr)
                 h = int((rect.bottom - rect.top) / dpr)
-                
+
                 if w > 40 and h > 40:
                     rects.append(QRect(rx, ry, w, h))
             except Exception: pass
@@ -366,22 +366,22 @@ def apply_hdr_tone_mapping(image: QPixmap, strength: float = 0.85) -> QPixmap:
         original_dpr = image.devicePixelRatio()
         qimg = image.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
         w, h = qimg.width(), qimg.height()
-        
+
         ptr = qimg.bits()
         buf = memoryview(ptr)
         arr = np.frombuffer(buf, dtype=np.uint8).reshape((h, w, 4)).copy()
-        
+
         rgb = arr[:, :, :3].astype(np.float32) / 255.0
         mapped = rgb * rgb * (3.0 - 2.0 * rgb)
         blended = rgb * (1.0 - strength) + mapped * strength
         arr[:, :, :3] = (blended * 255.0).astype(np.uint8)
-        
+
         result_qimg = QImage(arr.tobytes(), w, h, QImage.Format.Format_RGBA8888)
         result_qimg.setDevicePixelRatio(original_dpr)
         res = QPixmap.fromImage(result_qimg)
         res.setDevicePixelRatio(original_dpr)
         return res
-    except Exception as e: 
+    except Exception as e:
         logger.error(f"HDR tone mapping failed: {e}")
         return image
 
@@ -389,13 +389,13 @@ def capture_full_desktop_instant() -> tuple[QPixmap, float, QRect]:
     try:
         screens = QGuiApplication.screens()
         if not screens: raise RuntimeError("No screens detected")
-        
+
         virtual_rect = QRect()
         max_dpr = 1.0
         for screen in screens:
             virtual_rect = virtual_rect.united(screen.geometry())
             max_dpr = max(max_dpr, screen.devicePixelRatio())
-        
+
         phys_w = int(virtual_rect.width() * max_dpr)
         phys_h = int(virtual_rect.height() * max_dpr)
         full_pixmap = QPixmap(phys_w, phys_h)
@@ -559,17 +559,17 @@ class TextItem(DrawItem):
         max_w = max((fm.horizontalAdvance(l) for l in lines), default=20)
         line_h = fm.height()
         th = line_h * len(lines)
-        
+
         rect = QRectF(self.pos.x(), self.pos.y(), max_w + 12, th + 8)
         self._rect = rect
-        
+
         is_dark = (self.color.red() * 0.299 + self.color.green() * 0.587 + self.color.blue() * 0.114) < 140
         shadow_color = QColor(255, 255, 255, 220) if is_dark else QColor(0, 0, 0, 190)
-        
+
         painter.setPen(shadow_color)
         for ox, oy in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1)]:
             painter.drawText(rect.translated(ox, oy), int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), self.text)
-            
+
         painter.setPen(self.color)
         painter.drawText(rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), self.text)
 
@@ -748,7 +748,7 @@ class TextAnnotationWidget(QFrame):
         self.edit.setPlaceholderText("输入文字内容...")
         self.edit.setFont(self.current_font)
         self._update_edit_stylesheet()
-        
+
         if initial_text:
             self.edit.setPlainText(initial_text)
             self.edit.selectAll()
@@ -817,7 +817,7 @@ class TextAnnotationWidget(QFrame):
         self.edit.document().setTextWidth(-1)
         doc_w = int(self.edit.document().idealWidth()) + 20
         doc_h = int(self.edit.document().size().height()) + 14
-        
+
         edit_w = max(180, doc_w)
         edit_h = max(38, doc_h)
         self.edit.setFixedSize(edit_w, edit_h)
@@ -896,16 +896,16 @@ class FloatingToolBar(QFrame):
         drag_handle.setStyleSheet("color: #9aa0a6; font-weight: bold; font-size: 16px;")
         drag_handle.setCursor(Qt.CursorShape.SizeAllCursor)
         layout.addWidget(drag_handle)
-        
+
         self.btn_group = QButtonGroup(self)
         self.btn_group.setExclusive(True)
         self.buttons = {}
         tools = [
-            ("rect", "矩形 (R)", True), ("circle", "椭圆 (O)", True), 
-            ("arrow", "箭头 (A)", True), ("line", "直线 (L)", True), 
-            ("pencil", "画笔 (P)", True), ("marker", "荧光笔 (H)", True), 
-            ("text", "文本 (T)", True), ("mosaic", "马赛克 (M)", True), 
-            ("badge", "序号 (B)", True), ("picker", "吸管取色 (C)", True)
+            ("rect", "矩形 (R)", True), ("circle", "椭圆 (O)", True),
+            ("arrow", "箭头 (A)", True), ("line", "直线 (L)", True),
+            ("pencil", "画笔 (P)", True), ("marker", "荧光笔 (H)", True),
+            ("text", "文本 (T)", True), ("mosaic", "马赛克 (M)", True),
+            ("badge", "序号 (B) · 悬停选择 1–15", True), ("picker", "吸管取色 (C)", True)
         ]
         for action, tooltip, checkable in tools:
             btn = QToolButton()
@@ -917,7 +917,7 @@ class FloatingToolBar(QFrame):
             btn.clicked.connect(lambda checked, a=action: self.tool_changed.emit(a))
             layout.addWidget(btn)
             self.buttons[action] = btn
-            
+
         self._add_separator(layout)
         self._current_width = _config.get("pen_width", 3)
         self.width_group = QButtonGroup(self)
@@ -934,7 +934,7 @@ class FloatingToolBar(QFrame):
             self.width_group.addButton(w_btn)
             layout.addWidget(w_btn)
             if width_val == self._current_width: w_btn.setChecked(True)
-            
+
         self._add_separator(layout)
         self._current_color = QColor(_config.get("default_color", "#ea4335"))
         self.color_group = QButtonGroup(self)
@@ -950,16 +950,16 @@ class FloatingToolBar(QFrame):
             self.color_group.addButton(c_btn)
             layout.addWidget(c_btn)
             if hex_val.upper() == self._current_color.name().upper(): c_btn.setChecked(True)
-            
+
         self.palette_btn = QToolButton()
         self.palette_btn.setToolTip("更多颜色...")
         self.palette_btn.setIcon(get_svg_icon("palette", "#5f6368", 20))
         self.palette_btn.setIconSize(QSize(20, 20))
         self.palette_btn.clicked.connect(self._choose_color)
         layout.addWidget(self.palette_btn)
-        
+
         self._add_separator(layout)
-        for action, tooltip, color in [("undo", "撤销 (Ctrl+Z)", "#5f6368"), ("ocr", "提取文字", "#1a73e8"), ("pin", "贴图 (F3)", "#1a73e8"), ("save", "保存 (Ctrl+S)", "#1a73e8"), ("close", "退出 (Esc)", "#ea4335"), ("check", "完成并复制 (Enter)", "#34a853")]:
+        for action, tooltip, color in [("undo", "撤销 (Ctrl+Z)", "#5f6368"), ("ocr", "OCR识别并核查 (Ctrl+Shift+C)", "#1a73e8"), ("pin", "贴图 (F3)", "#1a73e8"), ("save", "保存 (Ctrl+S)", "#1a73e8"), ("close", "退出 (Esc)", "#ea4335"), ("check", "完成并复制 (Enter)", "#34a853")]:
             btn = QToolButton()
             btn.setToolTip(tooltip)
             btn.setIcon(get_svg_icon(action, color, 20))
@@ -967,7 +967,7 @@ class FloatingToolBar(QFrame):
             if action == "check": action = "finish"
             btn.clicked.connect(lambda checked, a=action: self.action_triggered.emit(a))
             layout.addWidget(btn)
-            
+
         self._is_dragging = False
         self._drag_start_pos = QPoint()
         QTimer.singleShot(0, lambda: self.color_changed.emit(QColor(self._current_color)))
@@ -1061,14 +1061,17 @@ class PinnedImageWidget(QWidget):
         if event.key() == Qt.Key.Key_Escape: self.close()
 
 class OCRWorker(QThread):
-    finished = Signal(str, bool)
-    def __init__(self, img_bytes: bytes):
-        super().__init__()
+    result_ready = Signal(str, bool)
+    def __init__(self, img_bytes: bytes, parent=None):
+        super().__init__(parent)
         self.img_bytes, self._is_cancelled = img_bytes, False
     def run(self):
         try:
             ocr = get_ocr_engine()
-            if self._is_cancelled or not ocr: return
+            if self._is_cancelled: return
+            if not ocr:
+                self.result_ready.emit("OCR 引擎初始化失败，请检查 rapidocr-onnxruntime 安装。", False)
+                return
             result, _ = ocr(self.img_bytes)
             if self._is_cancelled: return
             if result:
@@ -1087,9 +1090,9 @@ class OCRWorker(QThread):
                 if current_line:
                     current_line.sort(key=lambda b: b["x"])
                     grouped_lines.append(self._smart_join(current_line))
-                self.finished.emit("\n".join(grouped_lines), True)
-            else: self.finished.emit("未识别到文字，请确保选区清晰。", False)
-        except Exception as e: self.finished.emit(f"OCR 引擎错误:\n{str(e)}", False)
+                self.result_ready.emit("\n".join(grouped_lines), True)
+            else: self.result_ready.emit("未识别到文字，请确保选区清晰。", False)
+        except Exception as e: self.result_ready.emit(f"OCR 引擎错误:\n{str(e)}", False)
     def _smart_join(self, line_items: list[dict]) -> str:
         text = ""
         for i, item in enumerate(line_items):
@@ -1104,58 +1107,144 @@ class OCRWorker(QThread):
     def cancel(self): self._is_cancelled = True
 
 class OCRDialog(QDialog):
-    def __init__(self, pixmap: QPixmap, parent=None):
+    """显示 OCR 结果供用户核查、修改，并在确认后复制。"""
+    def __init__(self, result_text: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"{__app_name__} - 文字识别 (OCR)")
-        self.resize(560, 400)
-        self.worker: Optional[OCRWorker] = None
+        self.setWindowTitle(f"{__app_name__} - 核查 OCR 识别结果")
+        self.resize(620, 440)
+        self.setMinimumSize(460, 320)
         self.setStyleSheet("""
             QDialog { background-color: #f8fafc; }
-            QTextEdit { background: #ffffff; border: 1px solid #e8eaed; border-radius: 8px; padding: 10px; font-size: 13px; color: #202124; line-height: 1.5; font-family: Consolas, 'Microsoft YaHei'; }
-            QPushButton { background: #1a73e8; color: #ffffff; border-radius: 6px; padding: 8px 16px; font-weight: bold; border: none; }
+            QLabel#Hint { color: #64748b; font-size: 12px; }
+            QTextEdit {
+                background: #ffffff; border: 1px solid #dbe3ef;
+                border-radius: 8px; padding: 10px; font-size: 13px;
+                color: #202124; font-family: Consolas, 'Microsoft YaHei';
+                selection-background-color: #bfdbfe;
+            }
+            QPushButton {
+                background: #1a73e8; color: #ffffff; border-radius: 6px;
+                padding: 8px 16px; font-weight: 600; border: none;
+            }
             QPushButton:hover { background: #1557b0; }
-            QPushButton:disabled { background: #dadce0; color: #80868b; }
+            QPushButton#CancelButton {
+                background: #ffffff; color: #334155; border: 1px solid #cbd5e1;
+            }
+            QPushButton#CancelButton:hover { background: #f1f5f9; }
         """)
-        lay = QVBoxLayout(self)
-        self.text_edit = QTextEdit()
-        self.text_edit.setReadOnly(True)
-        lay.addWidget(self.text_edit)
-        btn_lay = QHBoxLayout()
-        btn_lay.addStretch()
-        self.copy_btn = QPushButton("复制识别结果")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(9)
+
+        hint = QLabel("请核查识别结果；可直接在下方修正文字，再复制到剪贴板。")
+        hint.setObjectName("Hint")
+        layout.addWidget(hint)
+
+        self.text_edit = QTextEdit(self)
+        self.text_edit.setAcceptRichText(False)
+        self.text_edit.setPlainText(result_text)
+        layout.addWidget(self.text_edit, 1)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        self.cancel_btn = QPushButton("取消", self)
+        self.cancel_btn.setObjectName("CancelButton")
+        self.cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.cancel_btn)
+
+        self.copy_btn = QPushButton("复制并关闭", self)
+        self.copy_btn.setToolTip("将核查后的文字复制到剪贴板，并返回截图界面")
+        self.copy_btn.setDefault(True)
+        self.copy_btn.setShortcut("Ctrl+Return")
         self.copy_btn.clicked.connect(self._copy_and_close)
-        btn_lay.addWidget(self.copy_btn)
-        lay.addLayout(btn_lay)
-        self._process_ocr(pixmap)
-    def _process_ocr(self, pixmap: QPixmap):
-        if not HAS_OCR:
-            self.text_edit.setHtml(f"""<h3 style="color:#ea4335;">未检测到 RapidOCR</h3><pre style="background:#e8eaed; padding:8px; border-radius:4px;">pip install rapidocr-onnxruntime</pre>""")
-            self.copy_btn.hide()
-            return
-        self.text_edit.setText("⚡ 正在执行本地 OCR 识别，请稍候...")
-        self.copy_btn.setEnabled(False)
-        buffer = QByteArray()
-        buf_io = QBuffer(buffer)
-        buf_io.open(QIODevice.OpenModeFlag.WriteOnly)
-        pixmap.save(buf_io, "PNG")
-        self.worker = OCRWorker(bytes(buffer.data()))
-        self.worker.finished.connect(self._on_ocr_finished)
-        self.worker.start()
-    def _on_ocr_finished(self, text: str, success: bool):
-        self.text_edit.setText(text)
-        if success:
-            self.copy_btn.setEnabled(True)
-            self.copy_btn.show()
-        else: self.copy_btn.hide()
+        button_layout.addWidget(self.copy_btn)
+        layout.addLayout(button_layout)
+
+        self.text_edit.setFocus()
+
     def _copy_and_close(self):
-        QApplication.clipboard().setText(self.text_edit.toPlainText())
-        self.close()
-    def closeEvent(self, event):
-        if self.worker and self.worker.isRunning():
-            self.worker.cancel()
-            self.worker.quit()
-            self.worker.wait(200)
-        super().closeEvent(event)
+        text = self.text_edit.toPlainText()
+        if not text.strip():
+            QMessageBox.information(self, "没有可复制的文字", "请先确认识别结果不为空。")
+            self.text_edit.setFocus()
+            return
+        try:
+            QApplication.clipboard().setText(text)
+        except Exception as exc:
+            QMessageBox.warning(self, "复制失败", f"无法写入剪贴板：\n{exc}")
+            return
+        self.accept()
+
+
+class StepNumberPalette(QFrame):
+    """鼠标悬停序号工具时显示的 1–15 起始编号选择器。"""
+    number_selected = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("StepNumberPalette")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet("""
+            QFrame#StepNumberPalette {
+                background: #ffffff;
+                border: 1px solid #dbe3ef;
+                border-radius: 10px;
+            }
+            QLabel { color: #475569; font-size: 11px; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(9, 8, 9, 9)
+        layout.setSpacing(6)
+
+        self.title = QLabel("选择起始序号 · 后续自动递增")
+        self.title.setStyleSheet("font-size: 12px; font-weight: 600; color: #202124; border: none;")
+        layout.addWidget(self.title)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(5)
+        self.number_buttons = {}
+        for number in range(1, 16):
+            button = QToolButton(self)
+            button.setText(str(number))
+            button.setFixedSize(30, 30)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setToolTip(f"从 {number} 开始编号，之后自动递增")
+            button.clicked.connect(lambda checked=False, n=number: self.number_selected.emit(n))
+            self.number_buttons[number] = button
+            grid.addWidget(button, (number - 1) // 5, (number - 1) % 5)
+        layout.addLayout(grid)
+
+        self.status = QLabel("尚未手动选择；默认从 1 开始")
+        self.status.setStyleSheet("font-size: 10px; color: #64748b; border: none;")
+        layout.addWidget(self.status)
+        self.last_selected = None
+        self.set_last_selected(None)
+        self.adjustSize()
+
+    def set_last_selected(self, number: Optional[int]):
+        self.last_selected = number
+        for value, button in self.number_buttons.items():
+            if value == number:
+                button.setStyleSheet("""
+                    QToolButton { background: #1a73e8; color: #ffffff; border: 2px solid #1a73e8;
+                                  border-radius: 15px; font-weight: 700; }
+                    QToolButton:hover { background: #1557b0; }
+                """)
+                button.setToolTip(f"上次选择的序号：{value}；点击后从此编号开始递增")
+            else:
+                button.setStyleSheet("""
+                    QToolButton { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0;
+                                  border-radius: 15px; font-weight: 600; }
+                    QToolButton:hover { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
+                """)
+                button.setToolTip(f"从 {value} 开始编号，之后自动递增")
+        self.status.setText(
+            f"蓝色为上次选择：{number}" if number is not None
+            else "尚未手动选择；默认从 1 开始"
+        )
+        self.adjustSize()
 
 class ShortcutHelpDialog(QDialog):
     def __init__(self, parent=None):
@@ -1178,7 +1267,7 @@ class ShortcutHelpDialog(QDialog):
         shortcuts = [
             ("Esc / 右键", "取消当前绘制 / 退出"), ("Enter / 双击", "完成截图并复制"), ("Ctrl + S", "保存图片到本地"), ("Ctrl + Z", "撤销上一标注"),
             ("F3", "贴图到屏幕 (可缩放/调透明度)"), ("C", "吸管取色 (复制HEX并选中颜色)"), ("R / O / L / A", "矩形 / 椭圆 / 直线 / 箭头"),
-            ("P / H / T", "画笔 / 荧光笔 / 文本标注"), ("双击已有文字", "重新编辑文字/修改字号/改色"), ("B / M", "步骤序号 / 马赛克遮盖"), ("1 / 2 / 3", "切换笔刷粗细 (细/中/粗)")
+            ("P / H / T", "画笔 / 荧光笔 / 文本标注"), ("双击已有文字", "重新编辑文字/修改字号/改色"), ("B / M", "步骤序号 / 马赛克遮盖"), ("1 / 2 / 3", "切换笔刷粗细 (细/中/粗)"), ("Ctrl+Shift+C", "OCR 识别并打开结果核查窗口")
         ]
         for key, desc in shortcuts:
             row = QHBoxLayout()
@@ -1227,6 +1316,10 @@ class FrozenFrameEditor(QWidget):
         self.current_color = QColor(_config.get("default_color", "#ea4335"))
         self.current_width = _config.get("pen_width", 3)
         self.step_counter = 1
+        self.last_selected_step_number: Optional[int] = None
+        # 只回退当前编号序列中最近的标注；旧标注或切换起始编号后不污染当前计数。
+        self._step_history: list[tuple[StepBadgeItem, int]] = []
+        self._ocr_worker: Optional[OCRWorker] = None
 
         self.start_pos = QPoint()
         self.current_mouse_pos = QPoint()
@@ -1250,21 +1343,93 @@ class FrozenFrameEditor(QWidget):
         self.toolbar.width_changed.connect(lambda w: setattr(self, "current_width", w))
         self.toolbar.action_triggered.connect(self._handle_action)
 
+        self.number_palette = StepNumberPalette(self)
+        self.number_palette.number_selected.connect(self._select_step_number)
+        self.number_palette.installEventFilter(self)
+        self.number_palette.hide()
+        badge_button = self.toolbar.buttons.get("badge")
+        if badge_button:
+            badge_button.installEventFilter(self)
+
         self.help_dialog: Optional[ShortcutHelpDialog] = None
         self.setGeometry(virtual_rect)
         self.window_rects = get_window_rects(virtual_rect.topLeft(), max_dpr)
-        
+
         self.setWindowOpacity(0.0)
         self.show()
         self.activateWindow()
         self.raise_()
-        
+
         self._anim = QPropertyAnimation(self, b"windowOpacity")
         self._anim.setDuration(150)
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
         self._anim.setEasingCurve(QEasingCurve.Type.OutQuad)
         self._anim.start()
+
+    def eventFilter(self, watched, event):
+        badge_button = self.toolbar.buttons.get("badge") if hasattr(self, "toolbar") else None
+        if watched is badge_button:
+            if event.type() == QEvent.Type.Enter:
+                self._show_step_palette()
+            elif event.type() == QEvent.Type.Leave:
+                QTimer.singleShot(180, self._hide_step_palette_if_needed)
+        elif watched is getattr(self, "number_palette", None):
+            if event.type() == QEvent.Type.Leave:
+                QTimer.singleShot(180, self._hide_step_palette_if_needed)
+        return super().eventFilter(watched, event)
+
+    def _show_step_palette(self):
+        button = self.toolbar.buttons.get("badge")
+        if not button or not self.toolbar.isVisible():
+            return
+        self.number_palette.set_last_selected(self.last_selected_step_number)
+        self.number_palette.adjustSize()
+        anchor = button.mapTo(self, QPoint(button.width() // 2, button.height()))
+        x = anchor.x() - self.number_palette.width() // 2
+        y = anchor.y() + 7
+        if y + self.number_palette.height() > self.height() - 8:
+            button_top = button.mapTo(self, QPoint(0, 0)).y()
+            y = button_top - self.number_palette.height() - 7
+        x = max(8, min(x, self.width() - self.number_palette.width() - 8))
+        y = max(8, min(y, self.height() - self.number_palette.height() - 8))
+        self.number_palette.move(x, y)
+        self.number_palette.show()
+        self.number_palette.raise_()
+
+    def _hide_step_palette_if_needed(self):
+        if not self.number_palette.isVisible():
+            return
+        cursor_pos = QCursor.pos()
+        button = self.toolbar.buttons.get("badge")
+        if button and button.rect().contains(button.mapFromGlobal(cursor_pos)):
+            return
+        if self.number_palette.geometry().contains(self.mapFromGlobal(cursor_pos)):
+            return
+        self.number_palette.hide()
+
+    def _select_step_number(self, number: int):
+        self.step_counter = number
+        self.last_selected_step_number = number
+        # 手动选新起点即开始一段新编号序列，旧标注的撤销不能修改新序列。
+        self._step_history.clear()
+        self.number_palette.set_last_selected(number)
+        self._set_active_tool("badge")
+        self.number_palette.hide()
+        QToolTip.showText(QCursor.pos(), f"序号从 {number} 开始，后续自动递增")
+
+    def _forget_step_badge(self, item: DrawItem):
+        """删除/撤销序号时，仅当它属于当前序列末尾才恢复计数。"""
+        if not isinstance(item, StepBadgeItem):
+            return
+        for index, (badge, previous_counter) in enumerate(self._step_history):
+            if badge is item:
+                if index == len(self._step_history) - 1:
+                    self._step_history.pop()
+                    self.step_counter = previous_counter
+                else:
+                    self._step_history.pop(index)
+                return
 
     def _get_magnifier_rect(self, pos: QPoint) -> QRect:
         if not _config.get("show_magnifier", True): return QRect()
@@ -1279,6 +1444,8 @@ class FrozenFrameEditor(QWidget):
 
     def _set_active_tool(self, tool: str):
         self._commit_active_text_editor()
+        if tool != "badge" and hasattr(self, "number_palette"):
+            self.number_palette.hide()
         self.active_tool = tool
         self._update_cursor(self.current_mouse_pos)
         if self.selected_item:
@@ -1293,8 +1460,7 @@ class FrozenFrameEditor(QWidget):
         if action == "close": self.close()
         elif action == "undo" and self.draw_items:
             popped_item = self.draw_items.pop()
-            if isinstance(popped_item, StepBadgeItem):
-                self.step_counter = max(1, self.step_counter - 1)
+            self._forget_step_badge(popped_item)
             if popped_item == self.selected_item:
                 self.selected_item = None
             self.update()
@@ -1304,35 +1470,97 @@ class FrozenFrameEditor(QWidget):
         elif action == "ocr": self._run_ocr()
 
     def _run_ocr(self):
+        """识别当前选区，并弹出结果核查窗口；确认复制后退出截图层。"""
         self._commit_active_text_editor()
         if self.selected_rect.isEmpty():
-            QMessageBox.warning(self, "提示", "请先选择要识别的区域")
+            QToolTip.showText(QCursor.pos(), "请先框选要识别的文字区域")
             return
-        self.selected_item = None 
-        dialog = OCRDialog(self._render_final_snipped_pixmap(), self)
-        dialog.exec()
+        if not HAS_OCR:
+            QMessageBox.warning(
+                self, "OCR 不可用",
+                "未检测到 RapidOCR。请先安装依赖：\npip install rapidocr-onnxruntime"
+            )
+            return
+        if self.controller.is_ocr_running():
+            QToolTip.showText(QCursor.pos(), "已有 OCR 任务正在处理，请稍候再试")
+            return
+
+        # OCR 使用原始选区，避免矩形、序号、文字等截图标注干扰识别。
+        pixmap = self._render_ocr_pixmap()
+        if pixmap.isNull():
+            QToolTip.showText(QCursor.pos(), "截图区域为空，无法识别")
+            return
+        buffer = QByteArray()
+        io_buffer = QBuffer(buffer)
+        if not io_buffer.open(QIODevice.OpenModeFlag.WriteOnly) or not pixmap.save(io_buffer, "PNG"):
+            io_buffer.close()
+            QMessageBox.warning(self, "OCR 失败", "无法准备待识别的截图区域。")
+            return
+        io_buffer.close()
+
+        self.selected_item = None
+        worker = OCRWorker(bytes(buffer.data()), self.controller)
+        self._ocr_worker = worker
+        worker.result_ready.connect(self._on_ocr_result)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+        QToolTip.showText(QCursor.pos(), "正在识别文字；完成后会打开结果核查窗口")
+
+    def _on_ocr_result(self, text: str, success: bool):
+        self._ocr_worker = None
+        result_text = text.strip()
+        if success and result_text:
+            # 先让用户核查/修正，只有点击“复制并关闭”才写入剪贴板。
+            dialog = OCRDialog(result_text, self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                QToolTip.showText(QCursor.pos(), f"OCR 完成，{len(dialog.text_edit.toPlainText())} 个字符已复制")
+                self.close()
+            # 用户取消时保留截图和选区，方便再次识别或调整区域。
+            return
+
+        if text.startswith("OCR 引擎错误") or text.startswith("OCR 引擎初始化失败"):
+            QMessageBox.warning(self, "OCR 识别失败", text)
+        else:
+            QMessageBox.information(self, "未识别到文字", "请调整选区或确认文字清晰后重试。选区仍会保留。")
+
+
+    def _render_ocr_pixmap(self) -> QPixmap:
+        """裁剪原始截图选区，不叠加后期标注，避免污染 OCR 输入。"""
+        r = self.selected_rect.normalized()
+        if r.isEmpty():
+            return QPixmap()
+
+        dpr = self.max_dpr
+        cropped = QPixmap(max(1, int(r.width() * dpr)), max(1, int(r.height() * dpr)))
+        cropped.setDevicePixelRatio(dpr)
+        cropped.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(cropped)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.drawPixmap(-r.topLeft(), self.full_pixmap)
+        painter.end()
+        return cropped
 
     def _render_final_snipped_pixmap(self) -> QPixmap:
         r = self.selected_rect.normalized()
         if r.isEmpty(): return QPixmap()
-        
+
         dpr = self.max_dpr
         phys_w = max(1, int(r.width() * dpr))
         phys_h = max(1, int(r.height() * dpr))
-        
+
         cropped = QPixmap(phys_w, phys_h)
         cropped.setDevicePixelRatio(dpr)
         cropped.fill(Qt.GlobalColor.transparent)
-        
+
         painter = QPainter(cropped)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.drawPixmap(-r.topLeft(), self.full_pixmap)
-        
+
         painter.translate(-r.topLeft())
         for item in self.draw_items:
             item.paint(painter, self.full_pixmap)
-        
+
         painter.end()
         return cropped
 
@@ -1341,7 +1569,7 @@ class FrozenFrameEditor(QWidget):
         if self.selected_rect.isEmpty():
             self.close()
             return
-        self.selected_item = None 
+        self.selected_item = None
         pixmap = self._render_final_snipped_pixmap()
         if _config.get("auto_copy", True):
             QApplication.clipboard().setPixmap(pixmap)
@@ -1376,6 +1604,12 @@ class FrozenFrameEditor(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "保存失败", f"无法保存文件:\n{str(e)}")
 
+    def closeEvent(self, event):
+        # 若用户在识别完成前关闭截图层，丢弃该任务的结果，但不强制终止线程。
+        if self._ocr_worker and self._ocr_worker.isRunning():
+            self._ocr_worker.cancel()
+        super().closeEvent(event)
+
     def _get_handle_rects(self, r: QRect) -> list[tuple[int, QRect]]:
         if r.isEmpty(): return []
         nr, sz, half = r.normalized(), 8, 4
@@ -1406,7 +1640,7 @@ class FrozenFrameEditor(QWidget):
             if self.active_tool != "none":
                 self.setCursor(Qt.CursorShape.IBeamCursor if self.active_tool == "text" else Qt.CursorShape.CrossCursor)
                 return
-            
+
             hit = self._hit_test(pos)
             if hit in (0, 4): self.setCursor(Qt.CursorShape.SizeFDiagCursor)
             elif hit in (2, 6): self.setCursor(Qt.CursorShape.SizeBDiagCursor)
@@ -1455,7 +1689,7 @@ class FrozenFrameEditor(QWidget):
                 self.start_pos = pos
                 self.selected_rect = QRect(pos, pos)
                 self.selected_item = None
-                
+
             elif self.state == self.STATE_SELECTED:
                 hit = self._hit_test(pos)
                 if hit != -1 and self.active_tool == "none":
@@ -1468,13 +1702,13 @@ class FrozenFrameEditor(QWidget):
                                 self.item_last_pos = pos
                                 hit_item = True
                                 break
-                        
+
                         if not hit_item:
                             self.selected_item = None
                             self.state = self.STATE_MOVING
                             self.move_offset = pos - self.selected_rect.topLeft()
                             self.toolbar.hide()
-                    else:         
+                    else:
                         self.selected_item = None
                         self.state = self.STATE_RESIZING
                         self.active_handle = hit
@@ -1495,12 +1729,12 @@ class FrozenFrameEditor(QWidget):
         self.current_mouse_pos = pos
         self._update_cursor(pos)
 
-        if self.state == self.STATE_IDLE or self.active_tool == "picker": 
+        if self.state == self.STATE_IDLE or self.active_tool == "picker":
             update_region = QRegion()
             if _config.get("show_magnifier", True):
                 update_region = update_region.united(self._get_magnifier_rect(old_pos))
                 update_region = update_region.united(self._get_magnifier_rect(pos))
-                
+
             if self.state == self.STATE_IDLE and _config.get("auto_detect_window", True):
                 new_highlight = QRect()
                 for rect in self.window_rects:
@@ -1515,7 +1749,7 @@ class FrozenFrameEditor(QWidget):
                         update_region = update_region.united(self.highlighted_window.adjusted(-4, -4, 4, 4))
 
             if not update_region.isEmpty(): self.update(update_region)
-                
+
         elif self.state == self.STATE_SELECTING:
             self.selected_rect = QRect(self.start_pos, pos).normalized()
             self.update()
@@ -1565,8 +1799,7 @@ class FrozenFrameEditor(QWidget):
                     self.update()
                 elif self.draw_items:
                     popped = self.draw_items.pop()
-                    if isinstance(popped, StepBadgeItem):
-                        self.step_counter = max(1, self.step_counter - 1)
+                    self._forget_step_badge(popped)
                     self.update()
                 elif self.state == self.STATE_SELECTED:
                     self.selected_rect = QRect()
@@ -1591,21 +1824,22 @@ class FrozenFrameEditor(QWidget):
                         self.selected_rect = QRect()
                         self.state = self.STATE_IDLE
                 self.update()
-                
+
             elif self.state in (self.STATE_RESIZING, self.STATE_MOVING):
                 self.state = self.STATE_SELECTED
                 self._position_toolbar()
                 self.update()
-                
+
             elif self.state == self.STATE_MOVING_ITEM:
                 self.state = self.STATE_SELECTED
                 self.update()
-                
+
             elif self.state == self.STATE_EDITING:
                 if self.current_drawing_item:
                     self.draw_items.append(self.current_drawing_item)
                     if isinstance(self.current_drawing_item, StepBadgeItem):
-                        self.step_counter += 1
+                        self._step_history.append((self.current_drawing_item, self.step_counter))
+                        self.step_counter = self.current_drawing_item.number + 1
                     self.current_drawing_item = None
                 self.state = self.STATE_SELECTED
                 self.update()
@@ -1627,7 +1861,7 @@ class FrozenFrameEditor(QWidget):
     def _spawn_text_editor(self, pos: QPoint, text: str = "", font: Optional[QFont] = None, color: Optional[QColor] = None):
         """唤醒全新自适应文字卡片编辑器"""
         self._commit_active_text_editor()
-        
+
         editor_x = min(pos.x(), self.width() - 260)
         editor_y = min(pos.y(), self.height() - 130)
         safe_pos = QPoint(max(10, editor_x), max(10, editor_y))
@@ -1693,11 +1927,11 @@ class FrozenFrameEditor(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        
+
         clip_rect = event.rect()
         painter.setClipRect(clip_rect)
         painter.drawPixmap(0, 0, self.full_pixmap)
-        
+
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         if self.state == self.STATE_IDLE and not self.highlighted_window.isEmpty():
@@ -1708,7 +1942,7 @@ class FrozenFrameEditor(QWidget):
         path = QPainterPath()
         path.setFillRule(Qt.FillRule.OddEvenFill)
         path.addRect(QRectF(self.rect()))
-        
+
         target_rect = self.selected_rect.normalized()
         if not target_rect.isEmpty(): path.addRect(QRectF(target_rect))
         painter.fillPath(path, QColor(0, 0, 0, 115))
@@ -1717,7 +1951,7 @@ class FrozenFrameEditor(QWidget):
             painter.setPen(QPen(QColor("#1a73e8"), 2))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(target_rect)
-            
+
             if self.state in (self.STATE_SELECTED, self.STATE_EDITING, self.STATE_MOVING_ITEM):
                 painter.setBrush(QBrush(Qt.GlobalColor.white))
                 painter.setPen(QPen(QColor("#1a73e8"), 1.5))
@@ -1729,7 +1963,7 @@ class FrozenFrameEditor(QWidget):
             tw, th = fm.horizontalAdvance(dim_str) + 12, fm.height() + 6
             bx, by = target_rect.left(), target_rect.top() - th - 6
             if by < 5: by = target_rect.top() + 6
-            
+
             badge_rect = QRectF(bx, by, tw, th)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(QColor("#202124")))
@@ -1739,19 +1973,19 @@ class FrozenFrameEditor(QWidget):
 
         painter.save()
         if not target_rect.isEmpty(): painter.setClipRect(target_rect)
-        
+
         for item in self.draw_items:
             item.paint(painter, self.full_pixmap)
-            
+
         if self.current_drawing_item:
             self.current_drawing_item.paint(painter, self.full_pixmap)
-            
+
         if self.selected_item and self.state in (self.STATE_SELECTED, self.STATE_MOVING_ITEM):
             b_rect = self.selected_item.bounding_rect().adjusted(-3, -3, 3, 3)
             painter.setPen(QPen(QColor("#1a73e8"), 1, Qt.PenStyle.DashLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(b_rect)
-            
+
         painter.restore()
 
         if _config.get("show_magnifier", True) and (self.state in (self.STATE_IDLE, self.STATE_SELECTING) or self.active_tool == "picker"):
@@ -1792,7 +2026,7 @@ class FrozenFrameEditor(QWidget):
 
     def keyPressEvent(self, event):
         key = event.key()
-        
+
         if self.active_text_editor:
             if key == Qt.Key.Key_Escape:
                 self.active_text_editor.cancel()
@@ -1802,8 +2036,7 @@ class FrozenFrameEditor(QWidget):
 
         if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             if self.selected_item and self.selected_item in self.draw_items:
-                if isinstance(self.selected_item, StepBadgeItem):
-                    self.step_counter = max(1, self.step_counter - 1)
+                self._forget_step_badge(self.selected_item)
                 self.draw_items.remove(self.selected_item)
                 self.selected_item = None
                 self.update()
@@ -1825,6 +2058,7 @@ class FrozenFrameEditor(QWidget):
             if not self.help_dialog: self.help_dialog = ShortcutHelpDialog(self)
             self.help_dialog.move(self.rect().center() - self.help_dialog.rect().center())
             self.help_dialog.show()
+        elif key == Qt.Key.Key_C and event.modifiers() == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier): self._run_ocr()
         elif key == Qt.Key.Key_C and event.modifiers() == Qt.KeyboardModifier.NoModifier: self._set_active_tool("picker")
         elif key == Qt.Key.Key_F3:
             if not self.selected_rect.isEmpty(): self._pin_to_screen()
@@ -1848,7 +2082,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"{__app_name__} - 设置")
         self.setMinimumSize(580, 520)
-        
+
         self.setStyleSheet("""
             QDialog { background-color: #f8fafc; }
             QTabWidget::pane { border: 1px solid #e8eaed; border-radius: 8px; background: #ffffff; top: -1px; }
@@ -1876,7 +2110,7 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
         tabs = QTabWidget()
-        
+
         basic_tab = QWidget()
         basic_layout = QVBoxLayout(basic_tab)
         basic_layout.setSpacing(12)
@@ -2072,6 +2306,17 @@ class ScreenshotController(QObject):
         self.pinned_widgets.append(widget)
         widget.destroyed.connect(lambda: self.pinned_widgets.remove(widget) if widget in self.pinned_widgets else None)
 
+    def is_ocr_running(self) -> bool:
+        """防止不同截图窗口同时调用共享的 OCR 引擎。"""
+        return any(worker.isRunning() for worker in self.findChildren(OCRWorker))
+
+    def shutdown(self):
+        """退出应用前等待 OCR 线程结束，避免 QThread 仍运行时被销毁。"""
+        for worker in self.findChildren(OCRWorker):
+            if worker.isRunning():
+                worker.cancel()
+                worker.wait()
+
 class NativeHotkeyFilter(QAbstractNativeEventFilter):
     def __init__(self, hotkey_id, callback):
         super().__init__()
@@ -2094,7 +2339,7 @@ class TrayApp(QObject):
 
         self.tray_icon = QSystemTrayIcon(get_logo_icon(32), QApplication.instance())
         self.tray_icon.setToolTip(f"{__app_name__} v{__version__}")
-        
+
         menu = QMenu()
         menu.setStyleSheet("""
             QMenu { background: white; border: 1px solid #ccc; border-radius: 6px; padding: 4px; }
@@ -2106,7 +2351,7 @@ class TrayApp(QObject):
         menu.addAction("关于").triggered.connect(self.show_about)
         menu.addSeparator()
         menu.addAction("退出").triggered.connect(QApplication.instance().quit)
-        
+
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.activated.connect(self.on_tray_activated)
         self.tray_icon.show()
@@ -2142,24 +2387,24 @@ class TrayApp(QObject):
         dialog.setStyleSheet("background: #ffffff;")
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(30, 30, 30, 30); layout.setSpacing(10)
-        
+
         title_label = QLabel(f"<b><span style='font-size:28px; color:#1a73e8;'>QSnap</span></b> <span style='font-size:14px; color:#5f6368;'>v{__version__}</span>")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
-        
+
         desc = QLabel(f"<p style='color:#3c4043; font-size:13px; text-align:center;'>{__description__}</p>")
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(desc)
-        
+
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setStyleSheet("color: #e8eaed;")
         layout.addWidget(line)
-        
+
         footer = QLabel("<p style='color:#70757a; font-size:12px; line-height: 1.5;'>✓ 全新沉浸式文字卡片编辑器 (支持二次修改)<br>✓ 修复高分屏缩放与像素拉伸放大<br>✓ 吸管取色与剪贴板一键同步<br>✓ 基于 Qt6 引擎构建<br>✓ 作者: {}</p>".format(__author__))
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(footer)
-        
+
         dialog.exec()
 
 def main():
@@ -2175,9 +2420,10 @@ def main():
     app.setApplicationName(__app_name__)
     app.setApplicationVersion(__version__)
     app.setOrganizationName(__company__)
-    
+
     try:
         tray_app = TrayApp()
+        app.aboutToQuit.connect(tray_app.controller.shutdown)
         exit_code = app.exec()
     except Exception as e:
         logger.critical(f"Fatal error: {e}")
